@@ -160,41 +160,86 @@ export function prepareAntigravityRequest(
           }
         }
 
-        // Normalize tools. For Claude models, send functionDeclarations with parameters (no custom).
+        // Normalize tools. For Claude models, keep full function declarations (names + schemas).
         if (Array.isArray(requestPayload.tools)) {
           if (isClaudeModel) {
-            // Use functionDeclarations with parameters (mirrors CLIProxy path that Antigravity accepts).
-            const claudeTools: any[] = requestPayload.tools.map((tool: any, idx: number) => {
-              const schema =
-                tool.function?.parameters ||
-                tool.function?.input_schema ||
-                tool.function?.inputSchema ||
+            const functionDeclarations: any[] = [];
+            const passthroughTools: any[] = [];
+
+            const normalizeSchema = (schema: any) => {
+              if (schema && typeof schema === "object") {
+                return schema;
+              }
+              toolDebugMissing += 1;
+              return { type: "object", properties: {} };
+            };
+
+            requestPayload.tools.forEach((tool: any, idx: number) => {
+              const pushDeclaration = (decl: any, source: string) => {
+                const schema =
+                  decl?.parameters ||
+                  decl?.input_schema ||
+                  decl?.inputSchema ||
+                  tool.parameters ||
+                  tool.input_schema ||
+                  tool.inputSchema ||
+                  tool.function?.parameters ||
+                  tool.function?.input_schema ||
+                  tool.function?.inputSchema ||
+                  tool.custom?.parameters ||
+                  tool.custom?.input_schema;
+
+                const name =
+                  decl?.name ||
+                  tool.name ||
+                  tool.function?.name ||
+                  tool.custom?.name ||
+                  `tool-${functionDeclarations.length}`;
+
+                const description =
+                  decl?.description ||
+                  tool.description ||
+                  tool.function?.description ||
+                  tool.custom?.description ||
+                  "";
+
+                functionDeclarations.push({
+                  name,
+                  description,
+                  parameters: normalizeSchema(schema),
+                });
+
+                toolDebugSummaries.push(
+                  `decl=${name},src=${source},hasSchema=${schema ? "y" : "n"}`,
+                );
+              };
+
+              if (Array.isArray(tool.functionDeclarations) && tool.functionDeclarations.length > 0) {
+                tool.functionDeclarations.forEach((decl: any) => pushDeclaration(decl, "functionDeclarations"));
+                return;
+              }
+
+              // Fall back to function/custom style definitions.
+              if (
+                tool.function ||
+                tool.custom ||
                 tool.parameters ||
                 tool.input_schema ||
-                tool.inputSchema ||
-                tool.custom?.parameters ||
-                tool.custom?.input_schema ||
-                { type: "object", properties: {} };
-              const name =
-                tool.name ||
-                tool.function?.name ||
-                tool.custom?.name ||
-                `tool-${idx}`;
-              const description =
-                tool.description || tool.function?.description || tool.custom?.description || "";
+                tool.inputSchema
+              ) {
+                pushDeclaration(tool.function ?? tool.custom ?? tool, "function/custom");
+                return;
+              }
 
-              return {
-                functionDeclarations: [
-                  {
-                    name,
-                    description,
-                    parameters: schema,
-                  },
-                ],
-              };
+              // Preserve any non-function tool entries (e.g., codeExecution) untouched.
+              passthroughTools.push(tool);
             });
 
-            requestPayload.tools = claudeTools;
+            const finalTools: any[] = [];
+            if (functionDeclarations.length > 0) {
+              finalTools.push({ functionDeclarations });
+            }
+            requestPayload.tools = finalTools.concat(passthroughTools);
           } else {
             // Default normalization for non-Claude models
             requestPayload.tools = requestPayload.tools.map((tool: any, toolIndex: number) => {
@@ -263,6 +308,45 @@ export function prepareAntigravityRequest(
           }
         }
 
+        // For Claude models, ensure functionCall/tool use parts carry IDs (required by Anthropic).
+        if (isClaudeModel && Array.isArray(requestPayload.contents)) {
+          let toolCallCounter = 0;
+          const lastCallIdByName = new Map<string, string>();
+
+          requestPayload.contents = requestPayload.contents.map((content: any) => {
+            if (!content || !Array.isArray(content.parts)) {
+              return content;
+            }
+
+            const newParts = content.parts.map((part: any) => {
+              if (part && typeof part === "object" && part.functionCall) {
+                const call = { ...part.functionCall };
+                if (!call.id) {
+                  call.id = `tool-call-${++toolCallCounter}`;
+                }
+                const nameKey = typeof call.name === "string" ? call.name : `tool-${toolCallCounter}`;
+                lastCallIdByName.set(nameKey, call.id);
+                return { ...part, functionCall: call };
+              }
+
+              if (part && typeof part === "object" && part.functionResponse) {
+                const resp = { ...part.functionResponse };
+                if (!resp.id && typeof resp.name === "string") {
+                  const linkedId = lastCallIdByName.get(resp.name);
+                  if (linkedId) {
+                    resp.id = linkedId;
+                  }
+                }
+                return { ...part, functionResponse: resp };
+              }
+
+              return part;
+            });
+
+            return { ...content, parts: newParts };
+          });
+        }
+
         if ("model" in requestPayload) {
           delete requestPayload.model;
         }
@@ -281,12 +365,6 @@ export function prepareAntigravityRequest(
              userAgent: "antigravity",
              requestId: "agent-" + crypto.randomUUID(), 
         });
-        if (wrappedBody.request && typeof wrappedBody.request === 'object') {
-             (wrappedBody.request as any).sessionId = "-" + Math.floor(Math.random() * 9000000000000000000).toString();
-        }
-
-        body = JSON.stringify(wrappedBody);
-        
         if (wrappedBody.request && typeof wrappedBody.request === 'object') {
              (wrappedBody.request as any).sessionId = "-" + Math.floor(Math.random() * 9000000000000000000).toString();
         }
