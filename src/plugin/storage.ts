@@ -38,10 +38,6 @@ export function getStoragePath(): string {
   return join(getConfigDir(), "antigravity-accounts.json");
 }
 
-/**
- * Deduplicates accounts by email, keeping only the most recent entry for each email.
- * Accounts without email are kept as-is (no deduplication possible).
- */
 export function deduplicateAccountsByEmail(accounts: AccountMetadata[]): AccountMetadata[] {
   const emailToNewestIndex = new Map<string, number>();
   const indicesToKeep = new Set<number>();
