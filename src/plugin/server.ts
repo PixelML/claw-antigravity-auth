@@ -166,7 +166,7 @@ const successResponse = `<!DOCTYPE html>
         </svg>
       </div>
       <h1>All set!</h1>
-      <p>You've successfully authenticated with Antigravity. You can now return to Opencode.</p>
+      <p>You've successfully authenticated with Antigravity. You can now return to Claw.</p>
       <button class="btn" onclick="closeWindow()">Close this tab</button>
       <div class="sub-text">Usage Tip: Most browsers block auto-closing. If the button doesn't work, please close the tab manually.</div>
     </div>
